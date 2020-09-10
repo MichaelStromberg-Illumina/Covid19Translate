@@ -16,14 +16,14 @@ namespace Covid19Translate
             if (args.Length != 4)
             {
                 string programName = Path.GetFileName(Environment.GetCommandLineArgs()[0]);
-                Console.WriteLine($"{programName} <input GenBank path> <input synonyms path> <input protein HGVS list> <output VCF path>");
+                Console.WriteLine($"{programName} <input GenBank path> <input synonyms path> <input protein HGVS list> <output VCF directory>");
                 Environment.Exit(1);
             }
 
             string inputGenBankPath     = args[0];
             string inputSynonymsPath    = args[1];
             string inputProteinHgvsPath = args[2];
-            string outputVcfPath        = args[3];
+            string outputVcfDirectory   = args[3];
 
             Console.Write("- parsing GenBank file... ");
             (Dictionary<string, Transcript> idToTranscript, string bases) = Load(inputGenBankPath);
@@ -34,20 +34,39 @@ namespace Covid19Translate
             Console.WriteLine($"{Synonyms.ToProteinId.Count} synonyms loaded.");
             
             Console.Write("- parsing pseudo-HGVS p. nomenclature file... ");
-            HashSet<HgvsProteinEntry> hgvsEntries = HgvsProteinReader.GetEntries(inputProteinHgvsPath);
-            Console.WriteLine($"{hgvsEntries.Count} entries loaded.");
+            Dictionary<string, HgvsProteinEntry[]> hgvsEntriesBySample = HgvsProteinReader.GetEntries(inputProteinHgvsPath);
+            Console.WriteLine($"{hgvsEntriesBySample.Count} samples loaded.");
 
+            HashSet<HgvsProteinEntry> hgvsEntries = GetAggregateEntries(hgvsEntriesBySample);
+            
             DisplayHgvsEntries(hgvsEntries);
 
             Console.Write("- validating HGVS entries against gene models... ");
             HgvsValidator.Validate(hgvsEntries, idToTranscript, bases);
             Console.WriteLine("finished.");
+
+            foreach ((string sampleId, HgvsProteinEntry[] sampleHgvsProteinEntries) in hgvsEntriesBySample)
+            {
+                string vcfPath = Path.Combine(outputVcfDirectory, sampleId + ".vcf");
+                
+                Console.Write($"- writing variants for {sampleId}... ");
+                HashSet<SNV> snvs = HgvsConverter.Convert(sampleHgvsProteinEntries, idToTranscript, bases);
+                (int numExactPositions, int numAmbiguousPositions) = CountExactPositions(snvs);
+                WriteVcf(vcfPath, sampleId, snvs);
+                Console.WriteLine($"{snvs.Count} SNVs written ({numExactPositions} exact, {numAmbiguousPositions} ambiguous).");
+            }
+        }
+
+        private static HashSet<HgvsProteinEntry> GetAggregateEntries(Dictionary<string,HgvsProteinEntry[]> hgvsEntriesBySample)
+        {
+            var hgvsEntries = new HashSet<HgvsProteinEntry>();
             
-            Console.Write("- writing variants to VCF... ");
-            HashSet<SNV> snvs = HgvsConverter.Convert(hgvsEntries, idToTranscript, bases);
-            (int numExactPositions, int numAmbiguousPositions) = CountExactPositions(snvs);
-            WriteVcf(outputVcfPath, snvs);
-            Console.WriteLine($"{snvs.Count} SNVs written ({numExactPositions} exact, {numAmbiguousPositions} ambiguous).");
+            foreach (HgvsProteinEntry[] entries in hgvsEntriesBySample.Values)
+            {
+                foreach (HgvsProteinEntry entry in entries) hgvsEntries.Add(entry);
+            }
+
+            return hgvsEntries;
         }
 
         private static (int NumExactPositions, int NumAmbiguousPositions) CountExactPositions(HashSet<SNV> snvs)
@@ -64,10 +83,10 @@ namespace Covid19Translate
             return (numExactPositions, numAmbiguousPositions);
         }
 
-        private static void WriteVcf(string outputVcfPath, HashSet<SNV> snvs)
+        private static void WriteVcf(string outputVcfPath, string sampleId, HashSet<SNV> snvs)
         {
             using FileStream stream = FileUtilities.GetCreateStream(outputVcfPath);
-            using var        writer = new VcfWriter(stream);
+            using var        writer = new VcfWriter(stream, sampleId);
             
             foreach (SNV snv in snvs.OrderBy(x => x.Position)) writer.Write(snv);
         }
