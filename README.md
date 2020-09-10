@@ -65,5 +65,5 @@ Variants where the HGVS p. notation has been isolated to a single genomic positi
 ## Usage
 
 ```
-dotnet Covid19Translate.dll NC_045512_2020-07-18.gb synonyms.tsv MutationsBySample.tsv VCF
+dotnet bin\Release\netcoreapp3.1\Covid19Translate.dll Data\NC_045512_2020-07-18.gb Data\synonyms.tsv Data\MutationsBySample.tsv VCF
 ```
